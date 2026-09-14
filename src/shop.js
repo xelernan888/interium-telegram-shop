@@ -1,4 +1,3 @@
-import { randomBytes } from "node:crypto";
 import {
   createInvoice,
   getPaidInvoice,
@@ -7,21 +6,18 @@ import {
   parsePayload,
 } from "./cryptoPay.js";
 import { PRODUCTS, priceFor, productById } from "./products.js";
-import { getOrder, saveOrder, takeKey } from "./store.js";
 import {
-  payKeyboard,
-  sendMessage,
-} from "./telegram.js";
+  addKeys,
+  getOrder,
+  keyCount,
+  releaseExpiredHolds,
+  saveOrder,
+  takeKey,
+} from "./store.js";
+import { payKeyboard, sendMessage } from "./telegram.js";
 
 const currency = () =>
   (process.env.CURRENCY || "USD").toUpperCase() === "RUB" ? "RUB" : "USD";
-
-function issueKey(product) {
-  const pooled = takeKey();
-  if (pooled) return String(pooled).trim();
-  const stamp = randomBytes(4).toString("hex").toUpperCase();
-  return `IW-${product.id.toUpperCase()}-${stamp}`;
-}
 
 function deliveryText(order, product) {
   return [
@@ -40,27 +36,40 @@ export async function startBuy(userId, productId) {
   const product = productById(productId);
   if (!product) throw new Error("Unknown product");
 
+  await releaseExpiredHolds();
+  const reservedKey = await takeKey(product.id);
+  if (!reservedKey) {
+    throw new Error("out_of_stock");
+  }
+
   const fiat = currency();
   const amount = priceFor(product, fiat);
   const botName = process.env.BOT_USERNAME?.replace(/^@/, "").trim();
-  const invoice = await createInvoice({
-    currency_type: "fiat",
-    fiat,
-    amount,
-    accepted_assets: "USDT,TON,BTC",
-    description: `Interium ${product.title}`,
-    payload: newPayload(userId, product.id),
-    expires_in: 1800,
-    allow_comments: false,
-    allow_anonymous: false,
-    hidden_message: `Interium ${product.title} paid. Return to the bot.`,
-    ...(botName
-      ? {
-          paid_btn_name: "openBot",
-          paid_btn_url: `https://t.me/${botName}`,
-        }
-      : {}),
-  });
+
+  let invoice;
+  try {
+    invoice = await createInvoice({
+      currency_type: "fiat",
+      fiat,
+      amount,
+      accepted_assets: "USDT,TON,BTC",
+      description: `Interium ${product.title}`,
+      payload: newPayload(userId, product.id),
+      expires_in: 1800,
+      allow_comments: false,
+      allow_anonymous: false,
+      hidden_message: `Interium ${product.title} paid. Return to the bot.`,
+      ...(botName
+        ? {
+            paid_btn_name: "openBot",
+            paid_btn_url: `https://t.me/${botName}`,
+          }
+        : {}),
+    });
+  } catch (error) {
+    await addKeys(product.id, [reservedKey]);
+    throw error;
+  }
 
   await saveOrder({
     invoiceId: invoice.invoice_id,
@@ -69,6 +78,7 @@ export async function startBuy(userId, productId) {
     amount,
     fiat,
     status: "pending",
+    reservedKey,
     createdAt: new Date().toISOString(),
   });
 
@@ -110,7 +120,34 @@ export async function fulfillInvoice(invoice) {
   const product = productById(parsed.productId);
   if (!product) throw new Error(`Unknown product ${parsed.productId}`);
 
-  const key = existing?.key || issueKey(product);
+  const key = existing?.reservedKey || (await takeKey(product.id));
+  if (!key) {
+    await sendMessage(
+      parsed.userId,
+      "Оплата прошла, но ключей этого срока нет. Админ выдаст вручную."
+    ).catch(() => {});
+    const admins = (process.env.ADMIN_IDS || "").split(",");
+    for (const admin of admins) {
+      const id = Number(admin.trim());
+      if (!id) continue;
+      await sendMessage(
+        id,
+        `ОПЛАЧЕНО БЕЗ КЛЮЧА\nUser: ${parsed.userId}\n${product.title}\nInvoice: ${invoiceId}`
+      ).catch(() => {});
+    }
+    await saveOrder({
+      invoiceId,
+      userId: parsed.userId,
+      productId: product.id,
+      amount: confirmed.amount,
+      fiat: confirmed.fiat || existing?.fiat || currency(),
+      status: "paid_no_key",
+      paidAt: confirmed.paid_at || new Date().toISOString(),
+      createdAt: existing?.createdAt || new Date().toISOString(),
+    });
+    return null;
+  }
+
   const order = {
     invoiceId,
     userId: parsed.userId,
@@ -120,6 +157,7 @@ export async function fulfillInvoice(invoice) {
     asset: confirmed.paid_asset || confirmed.asset || "",
     status: "paid",
     key,
+    reservedKey: null,
     paidAt: confirmed.paid_at || new Date().toISOString(),
     createdAt: existing?.createdAt || new Date().toISOString(),
   };
@@ -147,17 +185,22 @@ export async function fulfillInvoice(invoice) {
   return order;
 }
 
-export function catalogText() {
+export async function catalogText() {
+  await releaseExpiredHolds();
   const lines = [
     "<b>INTERIUMWARE</b>",
     "Rust · external overlay",
     "",
-    ...PRODUCTS.map(
-      (item) => `• <b>${item.title}</b> — ${item.usd}$  ·  ${item.rub}₽`
-    ),
+    ...PRODUCTS.map((item) => {
+      const stock = keyCount(item.id);
+      const mark = stock > 0 ? `${stock} шт.` : "нет в наличии";
+      return `• <b>${item.title}</b> — ${item.usd}$  ·  ${item.rub}₽  ·  ${mark}`;
+    }),
     "",
     "Оплата: Crypto Pay (@send)",
-    "После оплаты ключ приходит автоматически.",
+    "После оплаты ключ этого срока приходит автоматически.",
   ];
   return lines.join("\n");
 }
+
+export { keyCount };

@@ -44,7 +44,7 @@ export function answerCallback(id, text) {
   return api("answerCallbackQuery", {
     callback_query_id: id,
     text,
-    show_alert: false,
+    show_alert: Boolean(text && text !== "Создаю счёт…"),
   });
 }
 
@@ -75,16 +75,20 @@ export function mainKeyboard() {
   };
 }
 
-export function catalogKeyboard() {
+export function catalogKeyboard(stock = {}) {
+  const label = (id, title) => {
+    const count = stock[id] ?? 0;
+    return count > 0 ? title : `${title} · нет`;
+  };
   return {
     inline_keyboard: [
       [
-        { text: "1 Day · $6 · 500₽", callback_data: "buy:1d" },
-        { text: "3 Days · $13 · 1100₽", callback_data: "buy:3d" },
+        { text: label("1d", "1 Day · $6 · 500₽"), callback_data: "buy:1d" },
+        { text: label("3d", "3 Days · $13 · 1100₽"), callback_data: "buy:3d" },
       ],
       [
-        { text: "7 Days · $22 · 1900₽", callback_data: "buy:7d" },
-        { text: "30 Days · $40 · 3500₽", callback_data: "buy:30d" },
+        { text: label("7d", "7 Days · $22 · 1900₽"), callback_data: "buy:7d" },
+        { text: label("30d", "30 Days · $40 · 3500₽"), callback_data: "buy:30d" },
       ],
     ],
   };

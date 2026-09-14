@@ -1,8 +1,16 @@
 import "dotenv/config";
 import express from "express";
 import { getMe, verifyPaySignature } from "./cryptoPay.js";
+import { PRODUCTS, productById } from "./products.js";
 import { catalogText, fulfillInvoice, startBuy } from "./shop.js";
-import { addKeys, keyCount, loadStore, paidCount } from "./store.js";
+import {
+  addKeys,
+  keyCount,
+  loadStore,
+  paidCount,
+  releaseExpiredHolds,
+  stockLines,
+} from "./store.js";
 import {
   answerCallback,
   catalogKeyboard,
@@ -16,6 +24,13 @@ import {
 
 const PORT = Number.parseInt(process.env.PORT || "3000", 10) || 3000;
 const PUBLIC_URL = (process.env.PUBLIC_URL || "").replace(/\/$/, "");
+
+async function catalogMarkup() {
+  await releaseExpiredHolds();
+  return catalogKeyboard(
+    Object.fromEntries(PRODUCTS.map((item) => [item.id, keyCount(item.id)]))
+  );
+}
 
 function welcome() {
   return [
@@ -33,13 +48,12 @@ async function handleCommand(message) {
   if (!userId || !chatId) return;
 
   if (text.startsWith("/start") || text === "Купить") {
-    await sendMessage(chatId, text === "Купить" ? catalogText() : welcome(), {
-      reply_markup: text === "Купить" ? catalogKeyboard() : mainKeyboard(),
-    });
-    if (text.startsWith("/start")) {
-      await sendMessage(chatId, catalogText(), {
-        reply_markup: catalogKeyboard(),
-      });
+    const markup = await catalogMarkup();
+    if (text === "Купить") {
+      await sendMessage(chatId, await catalogText(), { reply_markup: markup });
+    } else {
+      await sendMessage(chatId, welcome(), { reply_markup: mainKeyboard() });
+      await sendMessage(chatId, await catalogText(), { reply_markup: markup });
     }
     return;
   }
@@ -71,19 +85,35 @@ async function handleCommand(message) {
   if (text.startsWith("/keys") && isAdmin(userId)) {
     const extra = text.replace("/keys", "").trim();
     if (!extra) {
-      await sendMessage(chatId, `В пуле ключей: <b>${keyCount()}</b>`);
+      await sendMessage(
+        chatId,
+        ["<b>Сток</b>", ...stockLines(), "", "Добавить: <code>/keys 7d KEY1 KEY2</code>"].join(
+          "\n"
+        )
+      );
       return;
     }
-    const keys = extra.split(/[\s,]+/).filter(Boolean);
-    const total = await addKeys(keys);
-    await sendMessage(chatId, `Добавлено ${keys.length}. Сейчас в пуле: ${total}`);
+    const [rawId, ...rest] = extra.split(/[\s,]+/).filter(Boolean);
+    const product = productById(rawId.toLowerCase());
+    if (!product || !rest.length) {
+      await sendMessage(
+        chatId,
+        "Формат: <code>/keys 1d KEY1 KEY2</code>\nСроки: 1d · 3d · 7d · 30d"
+      );
+      return;
+    }
+    const total = await addKeys(product.id, rest);
+    await sendMessage(
+      chatId,
+      `В ${product.title} добавлено ${rest.length}. Сейчас: <b>${total}</b> шт.`
+    );
     return;
   }
 
   if (text === "/stats" && isAdmin(userId)) {
     await sendMessage(
       chatId,
-      `Оплачено заказов: <b>${paidCount()}</b>\nКлючей в пуле: <b>${keyCount()}</b>`
+      [`Оплачено заказов: <b>${paidCount()}</b>`, "", ...stockLines()].join("\n")
     );
   }
 }
@@ -94,15 +124,22 @@ async function handleCallback(query) {
   if (!userId) return;
   if (!data.startsWith("buy:")) return;
   const productId = data.slice(4);
+  await releaseExpiredHolds();
+  if (keyCount(productId) < 1) {
+    await answerCallback(query.id, "Нет в наличии");
+    await sendMessage(userId, "Этого срока сейчас нет. Выбери другой или подожди сток.");
+    return;
+  }
   try {
     await answerCallback(query.id, "Создаю счёт…");
     await startBuy(userId, productId);
   } catch (error) {
     console.error("buy failed:", error.message);
-    await sendMessage(
-      userId,
-      `Не получилось создать счёт: ${error.message}`
-    ).catch(() => {});
+    const text =
+      error.message === "out_of_stock"
+        ? "Нет в наличии."
+        : `Не получилось создать счёт: ${error.message}`;
+    await sendMessage(userId, text).catch(() => {});
   }
 }
 
