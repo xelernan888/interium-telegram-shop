@@ -1,6 +1,6 @@
 import "dotenv/config";
 import express from "express";
-import { getMe, verifyPaySignature } from "./cryptoPay.js";
+import { getMe, tokenDebugInfo, verifyPaySignature } from "./cryptoPay.js";
 import { PRODUCTS, productById } from "./products.js";
 import { catalogText, fulfillInvoice, startBuy } from "./shop.js";
 import {
@@ -242,6 +242,7 @@ if (!globalThis.__interiumHttp) {
     console.log(`Crypto Pay app: ${me.name || me.app_id || "ok"}`);
   } catch (error) {
     console.error("Crypto Pay getMe failed:", error.message);
+    console.error("Crypto Pay debug:", tokenDebugInfo());
   }
 
   if (PUBLIC_URL) {

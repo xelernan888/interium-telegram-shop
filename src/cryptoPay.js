@@ -1,26 +1,45 @@
 import { createHmac, createHash, randomBytes, timingSafeEqual } from "node:crypto";
 
-const API =
-  process.env.CRYPTO_PAY_API?.trim() || "https://pay.crypt.bot/api";
+const API = (
+  process.env.CRYPTO_PAY_API ||
+  "https://pay.crypt.bot/api"
+).replace(/\/$/, "");
 
 export function cryptoPayToken() {
-  const token = (process.env.CRYPTO_PAY_TOKEN || "")
-    .trim()
+  const raw =
+    process.env.CRYPTO_PAY_TOKEN ||
+    process.env.CRYPTO_PAY_API_TOKEN ||
+    process.env.CRYPTOPAY_TOKEN ||
+    process.env.CRYPTO_BOT_TOKEN ||
+    "";
+  const token = String(raw)
+    .replace(/^\uFEFF/, "")
+    .replace(/[\r\n\t ]+/g, "")
     .replace(/^["']|["']$/g, "")
-    .replace(/^Crypto-Pay-API:\s*/i, "")
-    .replace(/^Bearer\s+/i, "");
+    .replace(/^Crypto-Pay-API-Token:/i, "")
+    .replace(/^Crypto-Pay-API:/i, "")
+    .replace(/^Bearer/i, "");
   if (!token) throw new Error("CRYPTO_PAY_TOKEN is missing");
   return token;
 }
 
+function authHeaders() {
+  const token = cryptoPayToken();
+  return {
+    "Crypto-Pay-API-Token": token,
+    "Crypto-Pay-API": token,
+  };
+}
+
 async function api(method, body) {
+  const hasBody = body && Object.keys(body).length > 0;
   const response = await fetch(`${API}/${method}`, {
-    method: "POST",
+    method: hasBody ? "POST" : "GET",
     headers: {
-      "Crypto-Pay-API": cryptoPayToken(),
-      "Content-Type": "application/json",
+      ...authHeaders(),
+      ...(hasBody ? { "Content-Type": "application/json" } : {}),
     },
-    body: JSON.stringify(body ?? {}),
+    body: hasBody ? JSON.stringify(body) : undefined,
   });
   let data;
   try {
@@ -30,9 +49,9 @@ async function api(method, body) {
   }
   if (!data?.ok) {
     const name = data?.error?.name || data?.error || `HTTP ${response.status}`;
-    if (String(name).toUpperCase() === "UNAUTHORIZED") {
+    if (String(name).toUpperCase().includes("UNAUTHORIZED")) {
       throw new Error(
-        "UNAUTHORIZED: неверный CRYPTO_PAY_TOKEN. Нужен API-токен приложения из @CryptoBot → Crypto Pay / @send, не токен BotFather."
+        "UNAUTHORIZED: Crypto Pay не принял токен. В @send / @CryptoBot открой Crypto Pay → своё приложение → API Token. Вставь в CRYPTO_PAY_TOKEN целиком (цифры:буквы). Не токен BotFather."
       );
     }
     throw new Error(String(name));
@@ -91,6 +110,16 @@ export function invoicePayUrl(invoice) {
     invoice.bot_invoice_url ||
     invoice.mini_app_invoice_url ||
     invoice.pay_url ||
-    (invoice.hash ? `https://t.me/CryptoBot?start=${invoice.hash}` : null)
+    (invoice.hash ? `https://t.me/send?start=${invoice.hash}` : null)
   );
+}
+
+export function tokenDebugInfo() {
+  try {
+    const token = cryptoPayToken();
+    const colon = token.includes(":");
+    return `token_len=${token.length} has_colon=${colon} host=${API}`;
+  } catch (error) {
+    return error.message;
+  }
 }
