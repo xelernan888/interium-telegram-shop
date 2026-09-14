@@ -40,11 +40,11 @@ export function sendMessage(chatId, text, extra = {}) {
   });
 }
 
-export function answerCallback(id, text) {
+export function answerCallback(id, text = "", alert = false) {
   return api("answerCallbackQuery", {
     callback_query_id: id,
     text,
-    show_alert: Boolean(text && text !== "Создаю счёт…"),
+    show_alert: Boolean(alert && text),
   });
 }
 
@@ -68,38 +68,66 @@ export function getUpdates(offset) {
   });
 }
 
-export function mainKeyboard(admin = false) {
-  const rows = [[{ text: "Купить" }], [{ text: "Мои покупки" }, { text: "Помощь" }]];
-  if (admin) rows.push([{ text: "Админка" }]);
+export function mainKeyboard(lang = "ru", admin = false) {
+  const t = lang === "en"
+    ? {
+        buy: "Buy",
+        orders: "My orders",
+        help: "Help",
+        support: "Support",
+        language: "Language",
+        admin: "Admin",
+      }
+    : {
+        buy: "Купить",
+        orders: "Мои покупки",
+        help: "Помощь",
+        support: "Поддержка",
+        language: "Язык",
+        admin: "Админка",
+      };
+  const rows = [
+    [{ text: t.buy }],
+    [{ text: t.orders }, { text: t.help }],
+    [{ text: t.support }, { text: t.language }],
+  ];
+  if (admin) rows.push([{ text: t.admin }]);
   return {
     keyboard: rows,
     resize_keyboard: true,
   };
 }
 
-export function catalogKeyboard(stock = {}, prices = {}) {
-  const label = (id, short) => {
+export function catalogKeyboard(lang = "ru", stock = {}, prices = {}) {
+  const none = lang === "en" ? "out" : "нет";
+  const titles =
+    lang === "en"
+      ? { "1d": "1 Day", "3d": "3 Days", "7d": "7 Days", "30d": "30 Days" }
+      : { "1d": "1 день", "3d": "3 дня", "7d": "7 дней", "30d": "30 дней" };
+  const label = (id) => {
     const count = stock[id] ?? 0;
     const price = prices[id] || "";
-    const base = `${short} · ${price} USDT`;
-    return count > 0 ? base : `${base} · нет`;
+    const base = `${titles[id]} · ${price} USDT`;
+    return count > 0 ? base : `${base} · ${none}`;
   };
   return {
     inline_keyboard: [
       [
-        { text: label("1d", "1 Day"), callback_data: "buy:1d" },
-        { text: label("3d", "3 Days"), callback_data: "buy:3d" },
+        { text: label("1d"), callback_data: "buy:1d" },
+        { text: label("3d"), callback_data: "buy:3d" },
       ],
       [
-        { text: label("7d", "7 Days"), callback_data: "buy:7d" },
-        { text: label("30d", "30 Days"), callback_data: "buy:30d" },
+        { text: label("7d"), callback_data: "buy:7d" },
+        { text: label("30d"), callback_data: "buy:30d" },
       ],
     ],
   };
 }
 
-export function payKeyboard(url) {
+export function payKeyboard(url, lang = "ru") {
   return {
-    inline_keyboard: [[{ text: "Оплатить USDT", url }]],
+    inline_keyboard: [
+      [{ text: lang === "en" ? "Pay USDT" : "Оплатить USDT", url }],
+    ],
   };
 }

@@ -8,9 +8,11 @@ import {
 } from "./cryptoPay.js";
 import {
   catalogBody,
+  guideText,
   invoiceText,
   paidText,
   productLine,
+  ui,
 } from "./copy.js";
 import { PRODUCTS, productById } from "./products.js";
 import {
@@ -23,14 +25,15 @@ import {
   releaseHold,
   saveOrder,
   takeKey,
+  userLang,
 } from "./store.js";
 import { payKeyboard, sendMessage } from "./telegram.js";
 
 /** @type {Set<number>} */
 const buying = new Set();
 
-function deliveryText(order, product) {
-  return paidText(product.title, product.days, order.key, order.amount);
+function deliveryText(lang, order, product) {
+  return paidText(lang, product.id, product.days, order.key, order.amount);
 }
 
 export async function expireStaleInvoices() {
@@ -65,6 +68,7 @@ export async function startBuy(userId, productId) {
   }
 
   const amount = getUsdt(product.id);
+  const lang = userLang(userId);
   const botName = process.env.BOT_USERNAME?.replace(/^@/, "").trim();
 
   let invoice;
@@ -111,8 +115,8 @@ export async function startBuy(userId, productId) {
 
   await sendMessage(
     userId,
-    invoiceText(product.title, amount, cancelled > 0),
-    { reply_markup: payKeyboard(url) }
+    invoiceText(lang, product.id, amount, cancelled > 0),
+    { reply_markup: payKeyboard(url, lang) }
   );
 
   return invoice;
@@ -144,15 +148,13 @@ export async function fulfillInvoice(invoice) {
 
   const product = productById(parsed.productId);
   if (!product) throw new Error(`Unknown product ${parsed.productId}`);
+  const lang = userLang(parsed.userId);
 
   const key =
     (existing?.status === "pending" ? existing.reservedKey : null) ||
     (await takeKey(product.id));
   if (!key) {
-    await sendMessage(
-      parsed.userId,
-      "Оплата прошла, но ключей этого срока нет. Админ выдаст вручную."
-    ).catch(() => {});
+    await sendMessage(parsed.userId, ui(lang).paidNoKey).catch(() => {});
     const admins = (process.env.ADMIN_IDS || "").split(",");
     for (const admin of admins) {
       const id = Number(admin.trim());
@@ -192,7 +194,8 @@ export async function fulfillInvoice(invoice) {
   };
   await saveOrder(order);
 
-  await sendMessage(parsed.userId, deliveryText(order, product));
+  await sendMessage(parsed.userId, deliveryText(lang, order, product));
+  await sendMessage(parsed.userId, guideText(lang));
 
   const admins = (process.env.ADMIN_IDS || "").split(",");
   for (const admin of admins) {
@@ -214,14 +217,14 @@ export async function fulfillInvoice(invoice) {
   return order;
 }
 
-export async function catalogText({ cancelled = false } = {}) {
+export async function catalogText(lang, { cancelled = false } = {}) {
   await expireStaleInvoices();
   const items = PRODUCTS.map((item, index) => {
-    const line = productLine(item.title, getUsdt(item.id), keyCount(item.id));
+    const line = productLine(lang, item.id, getUsdt(item.id), keyCount(item.id));
     return index === PRODUCTS.length - 1 ? line : `${line}\n`;
   });
-  const body = catalogBody(items);
-  return cancelled ? `Неоплаченный счёт отменён.\n\n${body}` : body;
+  const body = catalogBody(lang, items);
+  return cancelled ? `${ui(lang).cancelled}\n\n${body}` : body;
 }
 
 export { keyCount };

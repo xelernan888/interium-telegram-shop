@@ -20,6 +20,7 @@ const empty = () => ({
   orders: {},
   keys: emptyKeys(),
   prices: emptyPrices(),
+  users: {},
 });
 
 let db = empty();
@@ -49,6 +50,16 @@ function normalizePrices(raw) {
   return prices;
 }
 
+function normalizeUsers(raw) {
+  if (!raw || typeof raw !== "object") return {};
+  const users = {};
+  for (const [id, value] of Object.entries(raw)) {
+    const lang = value?.lang === "en" ? "en" : value?.lang === "ru" ? "ru" : null;
+    if (lang) users[id] = { lang };
+  }
+  return users;
+}
+
 export async function loadStore() {
   try {
     const parsed = JSON.parse(await readFile(FILE, "utf8"));
@@ -57,6 +68,7 @@ export async function loadStore() {
         parsed.orders && typeof parsed.orders === "object" ? parsed.orders : {},
       keys: normalizeKeys(parsed.keys),
       prices: normalizePrices(parsed.prices),
+      users: normalizeUsers(parsed.users),
     };
   } catch {
     db = empty();
@@ -71,6 +83,26 @@ async function saveStore() {
 
 function ensure() {
   if (!ready) throw new Error("store not loaded");
+}
+
+export function getLang(userId) {
+  ensure();
+  return db.users[String(userId)]?.lang ?? null;
+}
+
+export function userLang(userId) {
+  return getLang(userId) || "ru";
+}
+
+export async function setLang(userId, lang) {
+  ensure();
+  const value = lang === "en" ? "en" : "ru";
+  db.users[String(userId)] = {
+    ...(db.users[String(userId)] || {}),
+    lang: value,
+  };
+  await saveStore();
+  return value;
 }
 
 export function getUsdt(productId) {

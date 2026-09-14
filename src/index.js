@@ -1,7 +1,21 @@
 import "dotenv/config";
 import express from "express";
 import { handleAdminCallback, handleAdminMessage } from "./admin.js";
-import { helpText, ordersText, outOfStockText, welcomeText } from "./copy.js";
+import {
+  helpText,
+  isBuy,
+  isHelp,
+  isLanguage,
+  isOrders,
+  isSupport,
+  languageKeyboard,
+  languagePrompt,
+  ordersText,
+  outOfStockText,
+  supportText,
+  ui,
+  welcomeText,
+} from "./copy.js";
 import { getMe, tokenDebugInfo, verifyPaySignature } from "./cryptoPay.js";
 import { PRODUCTS } from "./products.js";
 import {
@@ -12,11 +26,14 @@ import {
   startBuy,
 } from "./shop.js";
 import {
+  getLang,
   getUsdt,
   keyCount,
   loadStore,
   paidCount,
+  setLang,
   stockLines,
+  userLang,
 } from "./store.js";
 import {
   answerCallback,
@@ -32,12 +49,29 @@ import {
 const PORT = Number.parseInt(process.env.PORT || "3000", 10) || 3000;
 const PUBLIC_URL = (process.env.PUBLIC_URL || "").replace(/\/$/, "");
 
-async function catalogMarkup() {
+async function catalogMarkup(lang) {
   await expireStaleInvoices();
   return catalogKeyboard(
+    lang,
     Object.fromEntries(PRODUCTS.map((item) => [item.id, keyCount(item.id)])),
     Object.fromEntries(PRODUCTS.map((item) => [item.id, getUsdt(item.id)]))
   );
+}
+
+async function askLanguage(chatId) {
+  await sendMessage(chatId, languagePrompt(), {
+    reply_markup: languageKeyboard(),
+  });
+}
+
+async function sendWelcomeShop(chatId, userId) {
+  const lang = userLang(userId);
+  await sendMessage(chatId, welcomeText(lang), {
+    reply_markup: mainKeyboard(lang, isAdmin(userId)),
+  });
+  await sendMessage(chatId, await catalogText(lang), {
+    reply_markup: await catalogMarkup(lang),
+  });
 }
 
 async function handleCommand(message) {
@@ -48,34 +82,48 @@ async function handleCommand(message) {
 
   if (isAdmin(userId) && (await handleAdminMessage(message))) return;
 
-  if (text.startsWith("/start") || text === "Купить") {
+  if (isLanguage(text) || !getLang(userId)) {
+    await askLanguage(chatId);
+    return;
+  }
+
+  const lang = userLang(userId);
+
+  if (text.startsWith("/start") || isBuy(text)) {
     let cancelled = 0;
-    if (text === "Купить") {
+    if (isBuy(text)) {
       cancelled = await cancelPendingForUser(userId);
     }
-    const markup = await catalogMarkup();
-    const kb = mainKeyboard(isAdmin(userId));
-    if (text === "Купить") {
-      await sendMessage(chatId, await catalogText({ cancelled: cancelled > 0 }), {
+    const markup = await catalogMarkup(lang);
+    const kb = mainKeyboard(lang, isAdmin(userId));
+    if (isBuy(text)) {
+      await sendMessage(chatId, await catalogText(lang, { cancelled: cancelled > 0 }), {
         reply_markup: markup,
       });
     } else {
-      await sendMessage(chatId, welcomeText(), { reply_markup: kb });
-      await sendMessage(chatId, await catalogText(), { reply_markup: markup });
+      await sendMessage(chatId, welcomeText(lang), { reply_markup: kb });
+      await sendMessage(chatId, await catalogText(lang), { reply_markup: markup });
     }
     return;
   }
 
-  if (text === "Помощь" || text === "/help") {
-    await sendMessage(chatId, helpText(), {
-      reply_markup: mainKeyboard(isAdmin(userId)),
+  if (isHelp(text)) {
+    await sendMessage(chatId, helpText(lang), {
+      reply_markup: mainKeyboard(lang, isAdmin(userId)),
     });
     return;
   }
 
-  if (text === "Мои покупки" || text === "/orders") {
-    await sendMessage(chatId, ordersText(), {
-      reply_markup: mainKeyboard(isAdmin(userId)),
+  if (isOrders(text)) {
+    await sendMessage(chatId, ordersText(lang), {
+      reply_markup: mainKeyboard(lang, isAdmin(userId)),
+    });
+    return;
+  }
+
+  if (isSupport(text)) {
+    await sendMessage(chatId, supportText(lang), {
+      reply_markup: mainKeyboard(lang, isAdmin(userId)),
     });
     return;
   }
@@ -93,6 +141,14 @@ async function handleCallback(query) {
   const userId = query.from?.id;
   if (!userId) return;
 
+  if (data.startsWith("lang:")) {
+    const lang = data === "lang:en" ? "en" : "ru";
+    await setLang(userId, lang);
+    await answerCallback(query.id, ui(lang).langSaved);
+    await sendWelcomeShop(userId, userId);
+    return;
+  }
+
   if (isAdmin(userId) && (data === "admin" || data.startsWith("admin:") || data.startsWith("ak:") || data.startsWith("ad:") || data.startsWith("ap:"))) {
     await answerCallback(query.id, "");
     await handleAdminCallback(query);
@@ -100,24 +156,33 @@ async function handleCallback(query) {
   }
 
   if (!data.startsWith("buy:")) return;
+
+  if (!getLang(userId)) {
+    await answerCallback(query.id, "");
+    await askLanguage(userId);
+    return;
+  }
+
+  const lang = userLang(userId);
+  const t = ui(lang);
   const productId = data.slice(4);
   await expireStaleInvoices();
   if (keyCount(productId) < 1) {
-    await answerCallback(query.id, "Нет в наличии");
-    await sendMessage(userId, outOfStockText());
+    await answerCallback(query.id, t.outAlert, true);
+    await sendMessage(userId, outOfStockText(lang));
     return;
   }
   try {
-    await answerCallback(query.id, "Создаю счёт…");
+    await answerCallback(query.id, t.creating);
     await startBuy(userId, productId);
   } catch (error) {
     console.error("buy failed:", error.message);
     const text =
       error.message === "out_of_stock"
-        ? "Нет в наличии."
+        ? t.outAlert
         : error.message === "busy"
-          ? "Подожди, счёт ещё создаётся."
-          : `Не получилось создать счёт: ${error.message}`;
+          ? t.busy
+          : t.buyFail(error.message);
     await sendMessage(userId, text).catch(() => {});
   }
 }

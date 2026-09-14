@@ -176,7 +176,7 @@ export async function handleAdminMessage(message) {
 
   const waiting = waitingPrice.get(userId);
   if (waiting && !text.startsWith("/")) {
-    if (["Купить", "Помощь", "Мои покупки", "Админка"].includes(text)) {
+    if (["Купить", "Buy", "Помощь", "Help", "Мои покупки", "My orders", "Админка", "Admin", "Поддержка", "Support", "Язык", "Language"].includes(text)) {
       waitingPrice.delete(userId);
       return false;
     }
@@ -193,7 +193,7 @@ export async function handleAdminMessage(message) {
     return true;
   }
 
-  if (text === "Админка" || text === "/admin") {
+  if (text === "Админка" || text === "Admin" || text === "/admin") {
     await showAdmin(chatId);
     return true;
   }
