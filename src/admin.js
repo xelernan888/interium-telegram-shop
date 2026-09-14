@@ -1,9 +1,13 @@
+import { formatSalePrice } from "./copy.js";
 import { PRODUCTS, productById } from "./products.js";
 import {
   addKeys,
+  getBaseUsdt,
+  getDiscount,
   getUsdt,
   listKeys,
   removeKey,
+  setDiscount,
   setUsdt,
   stockLines,
 } from "./store.js";
@@ -11,17 +15,29 @@ import { sendMessage } from "./telegram.js";
 
 /** @type {Map<number, string>} */
 const waitingPrice = new Map();
+const SALE_WAIT = "__sale__";
+
+function priceLabel(productId) {
+  return formatSalePrice(getUsdt(productId), getBaseUsdt(productId), getDiscount());
+}
 
 export function adminKeyboard() {
+  const discount = getDiscount();
   return {
     inline_keyboard: [
       PRODUCTS.map((item) => ({
-        text: `${item.id} · ${getUsdt(item.id)} USDT`,
+        text: `${item.id} · ${getUsdt(item.id)}`,
         callback_data: `ak:${item.id}`,
       })),
       [
         { text: "Все ключи", callback_data: "admin:all" },
         { text: "Цены USDT", callback_data: "admin:prices" },
+      ],
+      [
+        {
+          text: discount > 0 ? `Скидка ${discount}%` : "Скидка %",
+          callback_data: "admin:sale",
+        },
       ],
     ],
   };
@@ -69,13 +85,14 @@ export function pricesKeyboard() {
 export function productKeysText(productId) {
   const product = productById(productId);
   const keys = listKeys(productId);
-  const price = getUsdt(productId);
+  const price = priceLabel(productId);
   if (!keys.length) {
-    return `<b>${product.title}</b>\nЦена: <b>${price} USDT</b>\nКлючей нет.\nДобавить: <code>/keys ${productId} KEY</code>`;
+    return `<b>${product.title}</b>\nЦена: ${price}\nБазовая: <b>${getBaseUsdt(productId)}</b> USDT\nКлючей нет.\nДобавить: <code>/keys ${productId} KEY</code>`;
   }
   return [
     `<b>${product.title}</b>`,
-    `Цена: <b>${price} USDT</b>`,
+    `Цена: ${price}`,
+    `Базовая: <b>${getBaseUsdt(productId)}</b> USDT`,
     `В наличии: <b>${keys.length}</b>`,
     "",
     ...keys.map((key, index) => `${index + 1}. <code>${key}</code>`),
@@ -86,11 +103,16 @@ export function productKeysText(productId) {
 }
 
 function stockCounts() {
-  return PRODUCTS.map((item) => {
+  const discount = getDiscount();
+  const lines = PRODUCTS.map((item) => {
     const n = listKeys(item.id).length;
     const mark = n > 0 ? `${n} шт.` : "нет";
-    return `<b>${item.title}</b> — ${getUsdt(item.id)} USDT — ${mark}`;
+    return `<b>${item.title}</b> — ${priceLabel(item.id)} — ${mark}`;
   });
+  if (discount > 0) {
+    lines.push(`Скидка на все ключи: <b>−${discount}%</b>`);
+  }
+  return lines;
 }
 
 export async function showAdmin(chatId) {
@@ -104,6 +126,7 @@ export async function showAdmin(chatId) {
       ...stockCounts(),
       "",
       "Открой срок, чтобы увидеть сами ключи, удалить или сменить цену.",
+      "Скидка % действует на все ключи сразу.",
     ].join("\n"),
     { reply_markup: adminKeyboard() }
   );
@@ -127,9 +150,25 @@ export async function handleAdminCallback(query) {
 
   if (data === "admin:prices") {
     waitingPrice.delete(userId);
-    await sendMessage(userId, "Нажми срок, потом напиши новую цену в USDT.", {
+    await sendMessage(userId, "Нажми срок, потом напиши новую базовую цену в USDT.", {
       reply_markup: pricesKeyboard(),
     });
+    return true;
+  }
+
+  if (data === "admin:sale") {
+    waitingPrice.set(userId, SALE_WAIT);
+    const current = getDiscount();
+    await sendMessage(
+      userId,
+      [
+        "<b>Скидка на все ключи</b>",
+        current > 0 ? `Сейчас: <b>−${current}%</b>` : "Сейчас скидки нет.",
+        "",
+        "Напиши процент, например <code>20</code>",
+        "Снять скидку: <code>0</code> или <code>/sale 0</code>",
+      ].join("\n")
+    );
     return true;
   }
 
@@ -161,7 +200,7 @@ export async function handleAdminCallback(query) {
     waitingPrice.set(userId, id);
     await sendMessage(
       userId,
-      `Новая цена для <b>${productById(id).title}</b> в USDT.\nСейчас: <b>${getUsdt(id)}</b>\nНапиши число, например <code>18.5</code>`
+      `Новая базовая цена для <b>${productById(id).title}</b> в USDT.\nСейчас: <b>${getBaseUsdt(id)}</b>\nСо скидкой: ${priceLabel(id)}\nНапиши число, например <code>18.5</code>`
     );
     return true;
   }
@@ -176,16 +215,35 @@ export async function handleAdminMessage(message) {
 
   const waiting = waitingPrice.get(userId);
   if (waiting && !text.startsWith("/")) {
-    if (["Купить", "Buy", "Помощь", "Help", "Мои покупки", "My orders", "Админка", "Admin", "Поддержка", "Support", "Язык", "Language"].includes(text)) {
+    if (
+      text.startsWith("/start") ||
+      ["Купить", "Buy", "Помощь", "Help", "Мои покупки", "My orders", "Админка", "Admin", "Поддержка", "Support", "Язык", "Language"].includes(text)
+    ) {
       waitingPrice.delete(userId);
       return false;
+    }
+    if (waiting === SALE_WAIT) {
+      try {
+        const value = await setDiscount(text);
+        waitingPrice.delete(userId);
+        await sendMessage(
+          chatId,
+          value > 0
+            ? `Скидка на все ключи: <b>−${value}%</b>`
+            : "Скидка снята. Стоят базовые цены."
+        );
+        await showAdmin(chatId);
+      } catch {
+        await sendMessage(chatId, "Нужно число от 0 до 99, например 20");
+      }
+      return true;
     }
     try {
       const price = await setUsdt(waiting, text);
       waitingPrice.delete(userId);
       await sendMessage(
         chatId,
-        `${productById(waiting).title}: теперь <b>${price} USDT</b>`
+        `${productById(waiting).title}: базовая <b>${price} USDT</b>\nСо скидкой: ${priceLabel(waiting)}`
       );
     } catch {
       await sendMessage(chatId, "Нужно число больше 0, например 12.5");
@@ -248,9 +306,45 @@ export async function handleAdminMessage(message) {
     }
     try {
       const price = await setUsdt(product.id, rawPrice);
-      await sendMessage(chatId, `${product.title}: <b>${price} USDT</b>`);
+      await sendMessage(
+        chatId,
+        `${product.title}: базовая <b>${price} USDT</b>\nСо скидкой: ${priceLabel(product.id)}`
+      );
     } catch {
       await sendMessage(chatId, "Цена должна быть числом больше 0.");
+    }
+    return true;
+  }
+
+  if (text.startsWith("/sale") || text.startsWith("/discount")) {
+    waitingPrice.delete(userId);
+    const extra = text.replace(/^\/(sale|discount)/i, "").trim();
+    if (!extra) {
+      waitingPrice.set(userId, SALE_WAIT);
+      const current = getDiscount();
+      await sendMessage(
+        chatId,
+        [
+          "<b>Скидка на все ключи</b>",
+          current > 0 ? `Сейчас: <b>−${current}%</b>` : "Сейчас скидки нет.",
+          "",
+          "Напиши процент, например <code>20</code>",
+          "Снять: <code>/sale 0</code>",
+        ].join("\n")
+      );
+      return true;
+    }
+    try {
+      const value = await setDiscount(extra);
+      await sendMessage(
+        chatId,
+        value > 0
+          ? `Скидка на все ключи: <b>−${value}%</b>`
+          : "Скидка снята. Стоят базовые цены."
+      );
+      await showAdmin(chatId);
+    } catch {
+      await sendMessage(chatId, "Формат: <code>/sale 20</code> или <code>/sale 0</code>");
     }
     return true;
   }

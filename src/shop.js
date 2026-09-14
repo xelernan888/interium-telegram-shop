@@ -17,6 +17,8 @@ import {
 import { PRODUCTS, productById } from "./products.js";
 import {
   addKeys,
+  getBaseUsdt,
+  getDiscount,
   getOrder,
   getUsdt,
   keyCount,
@@ -115,7 +117,10 @@ export async function startBuy(userId, productId) {
 
   await sendMessage(
     userId,
-    invoiceText(lang, product.id, amount, cancelled > 0),
+    invoiceText(lang, product.id, amount, cancelled > 0, {
+      base: getBaseUsdt(product.id),
+      discount: getDiscount(),
+    }),
     { reply_markup: payKeyboard(url, lang) }
   );
 
@@ -219,11 +224,15 @@ export async function fulfillInvoice(invoice) {
 
 export async function catalogText(lang, { cancelled = false } = {}) {
   await expireStaleInvoices();
+  const discount = getDiscount();
   const items = PRODUCTS.map((item, index) => {
-    const line = productLine(lang, item.id, getUsdt(item.id), keyCount(item.id));
+    const line = productLine(lang, item.id, getUsdt(item.id), keyCount(item.id), {
+      base: getBaseUsdt(item.id),
+      discount,
+    });
     return index === PRODUCTS.length - 1 ? line : `${line}\n`;
   });
-  const body = catalogBody(lang, items);
+  const body = catalogBody(lang, items, discount);
   return cancelled ? `${ui(lang).cancelled}\n\n${body}` : body;
 }
 

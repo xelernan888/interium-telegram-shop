@@ -21,6 +21,7 @@ const empty = () => ({
   keys: emptyKeys(),
   prices: emptyPrices(),
   users: {},
+  discount: 0,
 });
 
 let db = empty();
@@ -60,6 +61,12 @@ function normalizeUsers(raw) {
   return users;
 }
 
+function normalizeDiscount(raw) {
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  return Math.min(99, Math.round(value * 10) / 10);
+}
+
 export async function loadStore() {
   try {
     const parsed = JSON.parse(await readFile(FILE, "utf8"));
@@ -69,6 +76,7 @@ export async function loadStore() {
       keys: normalizeKeys(parsed.keys),
       prices: normalizePrices(parsed.prices),
       users: normalizeUsers(parsed.users),
+      discount: normalizeDiscount(parsed.discount),
     };
   } catch {
     db = empty();
@@ -105,9 +113,40 @@ export async function setLang(userId, lang) {
   return value;
 }
 
-export function getUsdt(productId) {
+export function getDiscount() {
+  ensure();
+  return normalizeDiscount(db.discount);
+}
+
+export async function setDiscount(amount) {
+  ensure();
+  const raw = String(amount).trim().replace(",", ".").replace("%", "");
+  if (/^(off|none|нет)$/i.test(raw)) {
+    db.discount = 0;
+    await saveStore();
+    return 0;
+  }
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 0 || value > 99) {
+    throw new Error("bad_discount");
+  }
+  db.discount = Math.round(value * 10) / 10;
+  await saveStore();
+  return db.discount;
+}
+
+export function getBaseUsdt(productId) {
   ensure();
   return db.prices[productId] || defaultUsdt(productId);
+}
+
+export function getUsdt(productId) {
+  ensure();
+  const base = Number(getBaseUsdt(productId));
+  const discount = getDiscount();
+  if (discount <= 0) return base.toFixed(2);
+  const sale = Math.max(0.01, Math.round(base * (1 - discount / 100) * 100) / 100);
+  return sale.toFixed(2);
 }
 
 export async function setUsdt(productId, amount) {
@@ -230,15 +269,31 @@ export function paidCount() {
 
 export function stockLines() {
   ensure();
-  return PRODUCTS.map((item) => {
-    const keys = db.keys[item.id] || [];
-    const price = getUsdt(item.id);
-    if (!keys.length) {
-      return `<b>${item.title}</b> — ${price} USDT — нет ключей`;
-    }
-    return [
-      `<b>${item.title}</b> — ${price} USDT — ${keys.length} шт.`,
-      ...keys.map((key, index) => `${index + 1}. <code>${key}</code>`),
-    ].join("\n");
-  });
+  const discount = getDiscount();
+  const head =
+    discount > 0 ? [`Скидка на все ключи: <b>−${discount}%</b>`, ""] : [];
+  return [
+    ...head,
+    ...PRODUCTS.map((item) => {
+      const keys = db.keys[item.id] || [];
+      const price = formatPriceLine(item.id);
+      if (!keys.length) {
+        return `<b>${item.title}</b> — ${price} — нет ключей`;
+      }
+      return [
+        `<b>${item.title}</b> — ${price} — ${keys.length} шт.`,
+        ...keys.map((key, index) => `${index + 1}. <code>${key}</code>`),
+      ].join("\n");
+    }),
+  ];
+}
+
+function formatPriceLine(productId) {
+  const sale = getUsdt(productId);
+  const base = getBaseUsdt(productId);
+  const discount = getDiscount();
+  if (discount > 0 && Number(base) > Number(sale)) {
+    return `${base} → <b>${sale}</b> USDT (−${discount}%)`;
+  }
+  return `${sale} USDT`;
 }

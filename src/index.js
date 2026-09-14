@@ -26,6 +26,7 @@ import {
   startBuy,
 } from "./shop.js";
 import {
+  getDiscount,
   getLang,
   getUsdt,
   keyCount,
@@ -54,7 +55,8 @@ async function catalogMarkup(lang) {
   return catalogKeyboard(
     lang,
     Object.fromEntries(PRODUCTS.map((item) => [item.id, keyCount(item.id)])),
-    Object.fromEntries(PRODUCTS.map((item) => [item.id, getUsdt(item.id)]))
+    Object.fromEntries(PRODUCTS.map((item) => [item.id, getUsdt(item.id)])),
+    getDiscount()
   );
 }
 

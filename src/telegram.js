@@ -98,7 +98,7 @@ export function mainKeyboard(lang = "ru", admin = false) {
   };
 }
 
-export function catalogKeyboard(lang = "ru", stock = {}, prices = {}) {
+export function catalogKeyboard(lang = "ru", stock = {}, prices = {}, discount = 0) {
   const none = lang === "en" ? "out" : "нет";
   const titles =
     lang === "en"
@@ -107,7 +107,8 @@ export function catalogKeyboard(lang = "ru", stock = {}, prices = {}) {
   const label = (id) => {
     const count = stock[id] ?? 0;
     const price = prices[id] || "";
-    const base = `${titles[id]} · ${price} USDT`;
+    const sale = discount > 0 ? ` −${discount}%` : "";
+    const base = `${titles[id]} · ${price} USDT${sale}`;
     return count > 0 ? base : `${base} · ${none}`;
   };
   return {

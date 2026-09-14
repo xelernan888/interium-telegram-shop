@@ -23,6 +23,7 @@ const RU = {
   outStock: "нет в наличии",
   cancelled: "Неоплаченный счёт отменён.",
   payHint: "Оплата <b>USDT</b> через @send",
+  saleAll: "скидка на все ключи",
   afterPay: "После оплаты ключ и инструкция приходят автоматически.",
   reqTitle: "Требования",
   requirements: [
@@ -82,6 +83,7 @@ const EN = {
   outStock: "out of stock",
   cancelled: "Unpaid invoice cancelled.",
   payHint: "Pay with <b>USDT</b> via @send",
+  saleAll: "sale on all keys",
   afterPay: "After payment the key and setup guide are sent automatically.",
   reqTitle: "Requirements",
   requirements: [
@@ -177,18 +179,27 @@ export function requirementsBlock(lang) {
   return [`<b>${t.reqTitle}</b>`, ...t.requirements].join("\n");
 }
 
-export function productLine(lang, id, price, stock) {
-  const t = ui(lang);
-  const status = stock > 0 ? t.inStock(stock) : t.outStock;
-  return `<b>${productTitle(lang, id)}</b>\n${price} USDT  ·  ${status}`;
+export function formatSalePrice(sale, base, discount) {
+  if (discount > 0 && Number(base) > Number(sale)) {
+    return `<s>${base}</s> → <b>${sale}</b> USDT (−${discount}%)`;
+  }
+  return `${sale} USDT`;
 }
 
-export function catalogBody(lang, items) {
+export function productLine(lang, id, price, stock, extra = {}) {
+  const t = ui(lang);
+  const status = stock > 0 ? t.inStock(stock) : t.outStock;
+  const shown = formatSalePrice(price, extra.base || price, extra.discount || 0);
+  return `<b>${productTitle(lang, id)}</b>\n${shown}  ·  ${status}`;
+}
+
+export function catalogBody(lang, items, discount = 0) {
   const t = ui(lang);
   return [
     BRAND_HTML,
     RULE,
     "",
+    ...(discount > 0 ? [`<b>−${discount}%</b> ${t.saleAll}`, ""] : []),
     ...items,
     "",
     RULE,
@@ -199,15 +210,21 @@ export function catalogBody(lang, items) {
   ].join("\n");
 }
 
-export function invoiceText(lang, id, amount, cancelled) {
+export function invoiceText(lang, id, amount, cancelled, extra = {}) {
   const t = ui(lang);
+  const priceLine =
+    extra.discount > 0 && extra.base && Number(extra.base) > Number(amount)
+      ? lang === "en"
+        ? `Amount: <s>${extra.base}</s> → <b>${amount} USDT</b> (−${extra.discount}%)`
+        : `К оплате: <s>${extra.base}</s> → <b>${amount} USDT</b> (−${extra.discount}%)`
+      : t.invoicePay(amount);
   return [
     BRAND_HTML,
     `<b>${productTitle(lang, id)}</b>`,
     RULE,
     "",
     ...(cancelled ? [t.cancelled, ""] : []),
-    t.invoicePay(amount),
+    priceLine,
     t.invoiceTime,
     "",
     requirementsBlock(lang),
