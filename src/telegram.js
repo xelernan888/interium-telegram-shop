@@ -100,6 +100,6 @@ export function catalogKeyboard(stock = {}, prices = {}) {
 
 export function payKeyboard(url) {
   return {
-    inline_keyboard: [[{ text: "Оплатить в @send", url }]],
+    inline_keyboard: [[{ text: "Оплатить USDT", url }]],
   };
 }

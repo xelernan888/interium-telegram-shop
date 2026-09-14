@@ -6,6 +6,12 @@ import {
   newPayload,
   parsePayload,
 } from "./cryptoPay.js";
+import {
+  catalogBody,
+  invoiceText,
+  paidText,
+  productLine,
+} from "./copy.js";
 import { PRODUCTS, productById } from "./products.js";
 import {
   addKeys,
@@ -24,16 +30,7 @@ import { payKeyboard, sendMessage } from "./telegram.js";
 const buying = new Set();
 
 function deliveryText(order, product) {
-  return [
-    "<b>Оплата получена</b>",
-    "",
-    `Товар: <b>Interium ${product.title}</b>`,
-    `Срок: <b>${product.days} дн.</b>`,
-    `Ключ: <code>${order.key}</code>`,
-    `Цена: <b>${order.amount} USDT</b>`,
-    "",
-    "Сохрани это сообщение.",
-  ].join("\n");
+  return paidText(product.title, product.days, order.key, order.amount);
 }
 
 export async function expireStaleInvoices() {
@@ -76,12 +73,12 @@ export async function startBuy(userId, productId) {
       currency_type: "crypto",
       asset: "USDT",
       amount,
-      description: `Interium ${product.title}`,
+      description: `Interium.ware ${product.title}`,
       payload: newPayload(userId, product.id),
       expires_in: 900,
       allow_comments: false,
       allow_anonymous: false,
-      hidden_message: `Interium ${product.title} paid. Return to the bot.`,
+      hidden_message: `Interium.ware ${product.title} paid. Return to the bot.`,
       ...(botName
         ? {
             paid_btn_name: "openBot",
@@ -112,23 +109,9 @@ export async function startBuy(userId, productId) {
     createdAt: new Date().toISOString(),
   });
 
-  const extra =
-    cancelled > 0
-      ? "Предыдущий неоплаченный счёт отменён, тот ключ вернулся в сток."
-      : "";
-
   await sendMessage(
     userId,
-    [
-      `<b>Interium ${product.title}</b>`,
-      `<b>${amount} USDT</b>`,
-      extra,
-      "",
-      "Жми кнопку и оплати в @send / Crypto Pay.",
-      "На оплату 15 минут. Новый «Купить» отменяет старый счёт.",
-    ]
-      .filter(Boolean)
-      .join("\n"),
+    invoiceText(product.title, amount, cancelled > 0),
     { reply_markup: payKeyboard(url) }
   );
 
@@ -231,22 +214,14 @@ export async function fulfillInvoice(invoice) {
   return order;
 }
 
-export async function catalogText() {
+export async function catalogText({ cancelled = false } = {}) {
   await expireStaleInvoices();
-  const lines = [
-    "<b>INTERIUMWARE</b>",
-    "Rust · external overlay",
-    "",
-    ...PRODUCTS.map((item) => {
-      const stock = keyCount(item.id);
-      const mark = stock > 0 ? `${stock} шт.` : "нет в наличии";
-      return `• <b>${item.title}</b> — ${getUsdt(item.id)} USDT  ·  ${mark}`;
-    }),
-    "",
-    "Оплата: USDT через Crypto Pay (@send)",
-    "После оплаты ключ этого срока приходит автоматически.",
-  ];
-  return lines.join("\n");
+  const items = PRODUCTS.map((item, index) => {
+    const line = productLine(item.title, getUsdt(item.id), keyCount(item.id));
+    return index === PRODUCTS.length - 1 ? line : `${line}\n`;
+  });
+  const body = catalogBody(items);
+  return cancelled ? `Неоплаченный счёт отменён.\n\n${body}` : body;
 }
 
 export { keyCount };

@@ -1,6 +1,7 @@
 import "dotenv/config";
 import express from "express";
 import { handleAdminCallback, handleAdminMessage } from "./admin.js";
+import { helpText, ordersText, outOfStockText, welcomeText } from "./copy.js";
 import { getMe, tokenDebugInfo, verifyPaySignature } from "./cryptoPay.js";
 import { PRODUCTS } from "./products.js";
 import {
@@ -39,15 +40,6 @@ async function catalogMarkup() {
   );
 }
 
-function welcome() {
-  return [
-    "<b>INTERIUM</b>",
-    "Магазин лицензий. Оплата USDT через @send / Crypto Pay.",
-    "",
-    "Жми <b>Купить</b> — бот выставит счёт и после оплаты сам пришлёт ключ.",
-  ].join("\n");
-}
-
 async function handleCommand(message) {
   const userId = message.from?.id;
   const chatId = message.chat?.id;
@@ -63,42 +55,28 @@ async function handleCommand(message) {
     }
     const markup = await catalogMarkup();
     const kb = mainKeyboard(isAdmin(userId));
-    if (cancelled > 0) {
-      await sendMessage(
-        chatId,
-        "Неоплаченный счёт отменён. Ключ снова в наличии."
-      );
-    }
     if (text === "Купить") {
-      await sendMessage(chatId, await catalogText(), { reply_markup: markup });
+      await sendMessage(chatId, await catalogText({ cancelled: cancelled > 0 }), {
+        reply_markup: markup,
+      });
     } else {
-      await sendMessage(chatId, welcome(), { reply_markup: kb });
+      await sendMessage(chatId, welcomeText(), { reply_markup: kb });
       await sendMessage(chatId, await catalogText(), { reply_markup: markup });
     }
     return;
   }
 
   if (text === "Помощь" || text === "/help") {
-    await sendMessage(
-      chatId,
-      [
-        "1. Купить → выбери срок",
-        "2. Оплати счёт в @send (USDT, 15 минут)",
-        "3. Ключ придёт в этот чат сам",
-        "",
-        "Новый «Купить» отменяет старый неоплаченный счёт.",
-      ].join("\n"),
-      { reply_markup: mainKeyboard(isAdmin(userId)) }
-    );
+    await sendMessage(chatId, helpText(), {
+      reply_markup: mainKeyboard(isAdmin(userId)),
+    });
     return;
   }
 
   if (text === "Мои покупки" || text === "/orders") {
-    await sendMessage(
-      chatId,
-      "Ключи приходят сюда после оплаты. Если потерял — напиши админу.",
-      { reply_markup: mainKeyboard(isAdmin(userId)) }
-    );
+    await sendMessage(chatId, ordersText(), {
+      reply_markup: mainKeyboard(isAdmin(userId)),
+    });
     return;
   }
 
@@ -126,10 +104,7 @@ async function handleCallback(query) {
   await expireStaleInvoices();
   if (keyCount(productId) < 1) {
     await answerCallback(query.id, "Нет в наличии");
-    await sendMessage(
-      userId,
-      "Этого срока сейчас нет. Выбери другой или подожди сток."
-    );
+    await sendMessage(userId, outOfStockText());
     return;
   }
   try {
