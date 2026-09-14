@@ -233,7 +233,9 @@ app.post("/telegram", express.json({ limit: "1mb" }), (req, res) => {
 
 await loadStore();
 
-app.listen(PORT, async () => {
+if (!globalThis.__interiumHttp) {
+  globalThis.__interiumHttp = true;
+  app.listen(PORT, async () => {
   console.log(`HTTP on :${PORT}`);
   try {
     const me = await getMe();
@@ -255,4 +257,5 @@ app.listen(PORT, async () => {
   } else {
     await startPolling();
   }
-});
+  });
+}

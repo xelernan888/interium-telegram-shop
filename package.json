@@ -3,10 +3,10 @@
   "version": "1.0.0",
   "private": false,
   "description": "Interium Telegram shop bot with Crypto Pay (@send) auto-delivery.",
-  "main": "src/index.js",
+  "main": "http-wrapper.js",
   "type": "module",
   "scripts": {
-    "start": "node src/index.js"
+    "start": "node http-wrapper.js"
   },
   "engines": {
     "node": ">=18"

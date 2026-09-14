@@ -4,9 +4,40 @@ const API =
   process.env.CRYPTO_PAY_API?.trim() || "https://pay.crypt.bot/api";
 
 export function cryptoPayToken() {
-  const token = process.env.CRYPTO_PAY_TOKEN?.trim();
+  const token = (process.env.CRYPTO_PAY_TOKEN || "")
+    .trim()
+    .replace(/^["']|["']$/g, "")
+    .replace(/^Crypto-Pay-API:\s*/i, "")
+    .replace(/^Bearer\s+/i, "");
   if (!token) throw new Error("CRYPTO_PAY_TOKEN is missing");
   return token;
+}
+
+async function api(method, body) {
+  const response = await fetch(`${API}/${method}`, {
+    method: "POST",
+    headers: {
+      "Crypto-Pay-API": cryptoPayToken(),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body ?? {}),
+  });
+  let data;
+  try {
+    data = await response.json();
+  } catch {
+    throw new Error(`Crypto Pay ${method} HTTP ${response.status}`);
+  }
+  if (!data?.ok) {
+    const name = data?.error?.name || data?.error || `HTTP ${response.status}`;
+    if (String(name).toUpperCase() === "UNAUTHORIZED") {
+      throw new Error(
+        "UNAUTHORIZED: неверный CRYPTO_PAY_TOKEN. Нужен API-токен приложения из @CryptoBot → Crypto Pay / @send, не токен BotFather."
+      );
+    }
+    throw new Error(String(name));
+  }
+  return data.result;
 }
 
 export function verifyPaySignature(rawBody, signature) {
@@ -17,22 +48,6 @@ export function verifyPaySignature(rawBody, signature) {
   const right = Buffer.from(String(signature), "utf8");
   if (left.length !== right.length) return false;
   return timingSafeEqual(left, right);
-}
-
-async function api(method, body) {
-  const response = await fetch(`${API}/${method}`, {
-    method: body ? "POST" : "GET",
-    headers: {
-      "Crypto-Pay-API": cryptoPayToken(),
-      "Content-Type": "application/json",
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  const data = await response.json();
-  if (!data?.ok) {
-    throw new Error(data?.error?.name || data?.error || `Crypto Pay ${method} failed`);
-  }
-  return data.result;
 }
 
 export function getMe() {
