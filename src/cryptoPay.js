@@ -123,6 +123,12 @@ export function createInvoice(fields) {
   return api("createInvoice", fields);
 }
 
+export function deleteInvoice(invoiceId) {
+  return api("deleteInvoice", { invoice_id: Number(invoiceId) }).catch(
+    () => null
+  );
+}
+
 export async function getPaidInvoice(invoiceId) {
   const result = await api("getInvoices", {
     invoice_ids: String(invoiceId),

@@ -33,6 +33,6 @@ export function productById(id) {
   return PRODUCTS.find((item) => item.id === id) ?? null;
 }
 
-export function priceFor(product, currency) {
-  return currency === "RUB" ? String(product.rub) : product.usd;
+export function defaultUsdt(productId) {
+  return productById(productId)?.usd || "0";
 }

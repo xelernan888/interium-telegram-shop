@@ -68,27 +68,31 @@ export function getUpdates(offset) {
   });
 }
 
-export function mainKeyboard() {
+export function mainKeyboard(admin = false) {
+  const rows = [[{ text: "Купить" }], [{ text: "Мои покупки" }, { text: "Помощь" }]];
+  if (admin) rows.push([{ text: "Админка" }]);
   return {
-    keyboard: [[{ text: "Купить" }], [{ text: "Мои покупки" }, { text: "Помощь" }]],
+    keyboard: rows,
     resize_keyboard: true,
   };
 }
 
-export function catalogKeyboard(stock = {}) {
-  const label = (id, title) => {
+export function catalogKeyboard(stock = {}, prices = {}) {
+  const label = (id, short) => {
     const count = stock[id] ?? 0;
-    return count > 0 ? title : `${title} · нет`;
+    const price = prices[id] || "";
+    const base = `${short} · ${price} USDT`;
+    return count > 0 ? base : `${base} · нет`;
   };
   return {
     inline_keyboard: [
       [
-        { text: label("1d", "1 Day · $6 · 500₽"), callback_data: "buy:1d" },
-        { text: label("3d", "3 Days · $13 · 1100₽"), callback_data: "buy:3d" },
+        { text: label("1d", "1 Day"), callback_data: "buy:1d" },
+        { text: label("3d", "3 Days"), callback_data: "buy:3d" },
       ],
       [
-        { text: label("7d", "7 Days · $22 · 1900₽"), callback_data: "buy:7d" },
-        { text: label("30d", "30 Days · $40 · 3500₽"), callback_data: "buy:30d" },
+        { text: label("7d", "7 Days"), callback_data: "buy:7d" },
+        { text: label("30d", "30 Days"), callback_data: "buy:30d" },
       ],
     ],
   };

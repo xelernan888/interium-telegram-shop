@@ -1,14 +1,20 @@
 import "dotenv/config";
 import express from "express";
+import { handleAdminCallback, handleAdminMessage } from "./admin.js";
 import { getMe, tokenDebugInfo, verifyPaySignature } from "./cryptoPay.js";
-import { PRODUCTS, productById } from "./products.js";
-import { catalogText, fulfillInvoice, startBuy } from "./shop.js";
+import { PRODUCTS } from "./products.js";
 import {
-  addKeys,
+  cancelPendingForUser,
+  catalogText,
+  expireStaleInvoices,
+  fulfillInvoice,
+  startBuy,
+} from "./shop.js";
+import {
+  getUsdt,
   keyCount,
   loadStore,
   paidCount,
-  releaseExpiredHolds,
   stockLines,
 } from "./store.js";
 import {
@@ -26,16 +32,17 @@ const PORT = Number.parseInt(process.env.PORT || "3000", 10) || 3000;
 const PUBLIC_URL = (process.env.PUBLIC_URL || "").replace(/\/$/, "");
 
 async function catalogMarkup() {
-  await releaseExpiredHolds();
+  await expireStaleInvoices();
   return catalogKeyboard(
-    Object.fromEntries(PRODUCTS.map((item) => [item.id, keyCount(item.id)]))
+    Object.fromEntries(PRODUCTS.map((item) => [item.id, keyCount(item.id)])),
+    Object.fromEntries(PRODUCTS.map((item) => [item.id, getUsdt(item.id)]))
   );
 }
 
 function welcome() {
   return [
     "<b>INTERIUM</b>",
-    "Магазин лицензий. Оплата через @send / Crypto Pay.",
+    "Магазин лицензий. Оплата USDT через @send / Crypto Pay.",
     "",
     "Жми <b>Купить</b> — бот выставит счёт и после оплаты сам пришлёт ключ.",
   ].join("\n");
@@ -47,12 +54,25 @@ async function handleCommand(message) {
   const text = (message.text || "").trim();
   if (!userId || !chatId) return;
 
+  if (isAdmin(userId) && (await handleAdminMessage(message))) return;
+
   if (text.startsWith("/start") || text === "Купить") {
+    let cancelled = 0;
+    if (text === "Купить") {
+      cancelled = await cancelPendingForUser(userId);
+    }
     const markup = await catalogMarkup();
+    const kb = mainKeyboard(isAdmin(userId));
+    if (cancelled > 0) {
+      await sendMessage(
+        chatId,
+        "Неоплаченный счёт отменён. Ключ снова в наличии."
+      );
+    }
     if (text === "Купить") {
       await sendMessage(chatId, await catalogText(), { reply_markup: markup });
     } else {
-      await sendMessage(chatId, welcome(), { reply_markup: mainKeyboard() });
+      await sendMessage(chatId, welcome(), { reply_markup: kb });
       await sendMessage(chatId, await catalogText(), { reply_markup: markup });
     }
     return;
@@ -63,12 +83,12 @@ async function handleCommand(message) {
       chatId,
       [
         "1. Купить → выбери срок",
-        "2. Оплати счёт в @send",
+        "2. Оплати счёт в @send (USDT, 15 минут)",
         "3. Ключ придёт в этот чат сам",
         "",
-        "Если ключ не пришёл — напиши сюда invoice id, админ проверит.",
+        "Новый «Купить» отменяет старый неоплаченный счёт.",
       ].join("\n"),
-      { reply_markup: mainKeyboard() }
+      { reply_markup: mainKeyboard(isAdmin(userId)) }
     );
     return;
   }
@@ -77,35 +97,7 @@ async function handleCommand(message) {
     await sendMessage(
       chatId,
       "Ключи приходят сюда после оплаты. Если потерял — напиши админу.",
-      { reply_markup: mainKeyboard() }
-    );
-    return;
-  }
-
-  if (text.startsWith("/keys") && isAdmin(userId)) {
-    const extra = text.replace("/keys", "").trim();
-    if (!extra) {
-      await sendMessage(
-        chatId,
-        ["<b>Сток</b>", ...stockLines(), "", "Добавить: <code>/keys 7d KEY1 KEY2</code>"].join(
-          "\n"
-        )
-      );
-      return;
-    }
-    const [rawId, ...rest] = extra.split(/[\s,]+/).filter(Boolean);
-    const product = productById(rawId.toLowerCase());
-    if (!product || !rest.length) {
-      await sendMessage(
-        chatId,
-        "Формат: <code>/keys 1d KEY1 KEY2</code>\nСроки: 1d · 3d · 7d · 30d"
-      );
-      return;
-    }
-    const total = await addKeys(product.id, rest);
-    await sendMessage(
-      chatId,
-      `В ${product.title} добавлено ${rest.length}. Сейчас: <b>${total}</b> шт.`
+      { reply_markup: mainKeyboard(isAdmin(userId)) }
     );
     return;
   }
@@ -122,12 +114,22 @@ async function handleCallback(query) {
   const data = query.data || "";
   const userId = query.from?.id;
   if (!userId) return;
+
+  if (isAdmin(userId) && (data === "admin" || data.startsWith("admin:") || data.startsWith("ak:") || data.startsWith("ad:") || data.startsWith("ap:"))) {
+    await answerCallback(query.id, "");
+    await handleAdminCallback(query);
+    return;
+  }
+
   if (!data.startsWith("buy:")) return;
   const productId = data.slice(4);
-  await releaseExpiredHolds();
+  await expireStaleInvoices();
   if (keyCount(productId) < 1) {
     await answerCallback(query.id, "Нет в наличии");
-    await sendMessage(userId, "Этого срока сейчас нет. Выбери другой или подожди сток.");
+    await sendMessage(
+      userId,
+      "Этого срока сейчас нет. Выбери другой или подожди сток."
+    );
     return;
   }
   try {
@@ -138,7 +140,9 @@ async function handleCallback(query) {
     const text =
       error.message === "out_of_stock"
         ? "Нет в наличии."
-        : `Не получилось создать счёт: ${error.message}`;
+        : error.message === "busy"
+          ? "Подожди, счёт ещё создаётся."
+          : `Не получилось создать счёт: ${error.message}`;
     await sendMessage(userId, text).catch(() => {});
   }
 }
@@ -232,31 +236,36 @@ app.post("/telegram", express.json({ limit: "1mb" }), (req, res) => {
 });
 
 await loadStore();
+setInterval(() => {
+  expireStaleInvoices().catch((error) =>
+    console.error("expire holds:", error.message)
+  );
+}, 30_000);
 
 if (!globalThis.__interiumHttp) {
   globalThis.__interiumHttp = true;
   app.listen(PORT, async () => {
-  console.log(`HTTP on :${PORT}`);
-  console.log("Crypto Pay debug:", tokenDebugInfo());
-  try {
-    const me = await getMe();
-    console.log(`Crypto Pay app: ${me.name || me.app_id || "ok"}`);
-  } catch (error) {
-    console.error("Crypto Pay getMe failed:", error.message);
-  }
-
-  if (PUBLIC_URL) {
-    const payUrl = `${PUBLIC_URL}/pay`;
-    const tgUrl = `${PUBLIC_URL}/telegram`;
+    console.log(`HTTP on :${PORT}`);
+    console.log("Crypto Pay debug:", tokenDebugInfo());
     try {
-      await setWebhook(tgUrl);
-      console.log(`Telegram webhook: ${tgUrl}`);
+      const me = await getMe();
+      console.log(`Crypto Pay app: ${me.name || me.app_id || "ok"}`);
     } catch (error) {
-      console.error("setWebhook failed:", error.message);
+      console.error("Crypto Pay getMe failed:", error.message);
     }
-    console.log(`Put this URL in Crypto Pay Webhooks: ${payUrl}`);
-  } else {
-    await startPolling();
-  }
+
+    if (PUBLIC_URL) {
+      const payUrl = `${PUBLIC_URL}/pay`;
+      const tgUrl = `${PUBLIC_URL}/telegram`;
+      try {
+        await setWebhook(tgUrl);
+        console.log(`Telegram webhook: ${tgUrl}`);
+      } catch (error) {
+        console.error("setWebhook failed:", error.message);
+      }
+      console.log(`Put this URL in Crypto Pay Webhooks: ${payUrl}`);
+    } else {
+      await startPolling();
+    }
   });
 }
