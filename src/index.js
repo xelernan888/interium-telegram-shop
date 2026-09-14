@@ -237,12 +237,12 @@ if (!globalThis.__interiumHttp) {
   globalThis.__interiumHttp = true;
   app.listen(PORT, async () => {
   console.log(`HTTP on :${PORT}`);
+  console.log("Crypto Pay debug:", tokenDebugInfo());
   try {
     const me = await getMe();
     console.log(`Crypto Pay app: ${me.name || me.app_id || "ok"}`);
   } catch (error) {
     console.error("Crypto Pay getMe failed:", error.message);
-    console.error("Crypto Pay debug:", tokenDebugInfo());
   }
 
   if (PUBLIC_URL) {
